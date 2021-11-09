@@ -13,6 +13,8 @@ class Stocks:
         self._name = sheet.title
         armed = 0
         vals = sheet.get_all_values()
+        if vals[4][0] != "Ticker":
+            return False
         idx = 6
         self._ideas_mode = True
         while True:
@@ -67,6 +69,8 @@ class Stocks:
         self._name = sheet.title
         armed = 0
         vals = sheet.get_all_values()
+        if vals[10][0] != "Ticker":
+            return False
         idx = 12
         self._ideas_mode = False
         while True:
@@ -220,18 +224,20 @@ def generate_stats_message( doc_name ):
             doc = gc.open( doc_name )
             stocks = []
 
-            for i in [1,2]:
-               s = Stocks()
-               if s.load_from_sheet( doc.worksheet('index', i)):
-                   stocks.append( s )
-                   result += s.get_report() + "\n"
-                   # print(result)
-            s = Stocks()
-            if s.load_from_ideas( doc.worksheet('index', 5)):
-                result += s.get_report() + "\n"
+            for i in range(len(doc.worksheets())):
+                s = Stocks()
+                if s.load_from_sheet( doc.worksheet('index', i)):
+                    stocks.append( s )
+                    result += s.get_report() + "\n"
+                    # print(result)
+            for i in range(len(doc.worksheets())):
+                s = Stocks()
+                if s.load_from_ideas( doc.worksheet('index', i)):
+                    result += s.get_report() + "\n"
             del gc
             success = True
         except:
+            # raise
             pass
         if success:
             break
