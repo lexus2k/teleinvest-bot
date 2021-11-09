@@ -1,0 +1,18 @@
+[Unit]
+Description=Telegram stocks reporting bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=htpc
+Group=htpc
+Type=simple
+WorkingDirectory=/home/htpc/teleinvest-bot
+ExecStart=/usr/bin/python3 /home/htpc/teleinvest-bot/telegram_bot.py
+StandardOutput=journal
+StandardError=journal
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
