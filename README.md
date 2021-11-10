@@ -24,3 +24,4 @@ Investment portfolio is taken from Google Sheets document.
 
 * requests
 * pygsheets
+* yfinance
