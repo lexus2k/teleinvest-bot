@@ -1,6 +1,30 @@
+#!/usr/bin/python3
 import pygsheets
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
+import yfinance as yf
+import time
+import configparser
+
+
+def get_history_prices( ticker, period="1da" ):
+    if ticker[0:4] == "MCX:":
+        ticker = ticker[4:] + ".ME"
+    if ticker[0:4] == "FRA:":
+        ticker = ticker[4:] + ".DE"
+    start = datetime.now() + timedelta(days=-7)
+    end = datetime.now()
+    hist = None
+    for i in range(3):
+        try:
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period="1da", start=start, end=end)
+            #print(hist["Close"][1])
+            break
+        except:
+            pass
+        time.sleep(1.0)
+    return hist
 
 class Stocks:
     def __init__(self):
@@ -160,6 +184,20 @@ class Stocks:
             if self._stocks[r]['day_change'] <= -3.0:
                 result += u"\n\U00002716{} {} {} ({}%)".format( r, self._stocks[r]['price'], self._stocks[r]['buy'],
                           round(self._stocks[r]['day_change'], 1) )
+            elif self._stocks[r]["day_change"] < 0:
+                # Looking for the history data
+                hist = get_history_prices( r )
+                if len(hist) > 3:
+                    fall_change = 0
+                    fall_days = 0
+                    for i in range(len(hist)):
+                        perc = round((self._stocks[r]['price'] - hist["Close"][-i-1]) * 100/self._stocks[r]['price'],1 )
+                        if fall_change > perc:
+                            fall_change = min([fall_change,perc])
+                            fall_days = i + 1
+                    if fall_change/fall_days < -0.8:
+                        result += u"\n\U00002716{} {} {} ({}%, total fall {}% in {} days)".format( r, self._stocks[r]['price'], self._stocks[r]['buy'],
+                              round(self._stocks[r]['day_change'], 1), fall_change, fall_days)
         return result
 
     def find_to_buy(self):
@@ -247,9 +285,10 @@ def generate_stats_message( doc_name ):
 
 
 if __name__=="__main__":
-    gc = pygsheets.authorize()
-    # You can open a spreadsheet by its title as it appears in Google Docs
-    doc = gc.open("Test doc")
-    s = Stocks()
-    s.load_from_ideas( doc.worksheet('index', 5))
-    print(s.get_report())
+    main_doc = None
+
+    config = configparser.ConfigParser()
+    if len( config.read( 'config.ini')) > 0:
+        if config.has_option('main', 'sheets'):
+            main_doc = config.get('main', 'sheets')
+    print(generate_stats_message(main_doc))
