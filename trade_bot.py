@@ -176,6 +176,20 @@ class Stocks:
             if self._stocks[r]['day_change'] >= 3.0:
                 result += u"\n\U00002716{} {} {} ({}%)".format( r, self._stocks[r]['price'], self._stocks[r]['buy'],
                           round(self._stocks[r]['day_change'], 1) )
+            elif self._stocks[r]["day_change"] > 0:
+                # Looking for the history data
+                hist = get_history_prices( r )
+                if hist is not None and len(hist) > 3:
+                    rise_change = 0
+                    rise_days = 0
+                    for i in range(len(hist)):
+                        perc = round((self._stocks[r]['price'] - hist["Close"][-i-1]) * 100/self._stocks[r]['price'],1 )
+                        if rise_change < perc:
+                            rise_change = max([rise_change,perc])
+                            rise_days = i + 1
+                    if rise_change/rise_days > 1.0:
+                        result += u"\n\U00002716{} {} {} ({}%, total rise {}% in {} days)".format( r, self._stocks[r]['price'], self._stocks[r]['buy'],
+                              round(self._stocks[r]['day_change'], 1), rise_change, rise_days)
         return result
 
     def find_high_fall(self):
@@ -187,7 +201,7 @@ class Stocks:
             elif self._stocks[r]["day_change"] < 0:
                 # Looking for the history data
                 hist = get_history_prices( r )
-                if len(hist) > 3:
+                if hist is not None and len(hist) > 3:
                     fall_change = 0
                     fall_days = 0
                     for i in range(len(hist)):
