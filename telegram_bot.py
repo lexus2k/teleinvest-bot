@@ -99,8 +99,8 @@ logger.info("Bot started")
 
 # Receive all unconfirmed messages
 update_id = 0
-no_5am_stat = True
-no_10am_stat = True
+report_sent = False
+report_time = ["5:30", "21:00", "10:00"]
 
 while not exit_requested:
     result = telegram_update(telegram_bot_token, offset = update_id)
@@ -125,14 +125,19 @@ while not exit_requested:
                 sender = record[branch]['sender_chat']['id']
             process_text_message( telegram_bot_token, text, chat )
     now = datetime.datetime.now()
-    if now.hour == 5 and now.minute == 30:
-        if no_5am_stat:
-            msg = trade_bot.generate_stats_message( main_doc )
-            if msg != "":
-                no_5am_stat = False
-                telegram_send( telegram_bot_token, msg)
-    else:
-        no_5am_stat = True
+    clear_report_flag = True
+    for t in report_time:
+        h = int(t.split(':')[0])
+        m = int(t.split(':')[1])
+        if now.hour == h and now.minute == m:
+            clear_report_flag = False
+            if not report_sent:
+                msg = trade_bot.generate_stats_message( main_doc )
+                if msg != "":
+                    report_sent = True
+                    telegram_send( telegram_bot_token, msg)
+    if clear_report_flag:
+            report_sent = False
 
 
 
