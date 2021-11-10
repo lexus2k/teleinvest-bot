@@ -14,14 +14,16 @@ def get_history_prices( ticker, period="1da" ):
         ticker = ticker[4:] + ".DE"
     start = datetime.now() + timedelta(days=-7)
     end = datetime.now()
-    hist = None
+    hist = []
     for i in range(3):
         try:
             stock = yf.Ticker(ticker)
             hist = stock.history(period="1da", start=start, end=end)
             #print(hist["Close"][1])
             break
-        except:
+        except Exception as e:
+            # raise
+            hist = []
             pass
         time.sleep(1.0)
     return hist
@@ -181,13 +183,13 @@ class Stocks:
                 hist = get_history_prices( r )
                 if hist is not None and len(hist) > 3:
                     rise_change = 0
-                    rise_days = 0
+                    rise_days = 1
                     for i in range(len(hist)):
                         perc = round((self._stocks[r]['price'] - hist["Close"][-i-1]) * 100/self._stocks[r]['price'],1 )
                         if rise_change < perc:
                             rise_change = max([rise_change,perc])
                             rise_days = i + 1
-                    if rise_change/rise_days > 1.0:
+                    if rise_change/rise_days > 1.0 and rise_days >= 3:
                         result += u"\n\U00002716{} {} {} ({}%, total rise {}% in {} days)".format( r, self._stocks[r]['price'], self._stocks[r]['buy'],
                               round(self._stocks[r]['day_change'], 1), rise_change, rise_days)
         return result
@@ -203,7 +205,7 @@ class Stocks:
                 hist = get_history_prices( r )
                 if hist is not None and len(hist) > 3:
                     fall_change = 0
-                    fall_days = 0
+                    fall_days = 1
                     for i in range(len(hist)):
                         perc = round((self._stocks[r]['price'] - hist["Close"][-i-1]) * 100/self._stocks[r]['price'],1 )
                         if fall_change > perc:
@@ -289,7 +291,8 @@ def generate_stats_message( doc_name ):
             del gc
             success = True
         except:
-            # raise
+            result = ""
+            raise
             pass
         if success:
             break
