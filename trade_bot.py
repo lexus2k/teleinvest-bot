@@ -5,6 +5,44 @@ import time
 import yfinance as yf
 import time
 import configparser
+import requests
+
+
+def request_yahoo_history(tickers, begin, end, period = "1d"):
+    hist = {}
+    host = "https://query2.finance.yahoo.com/v8/finance/chart/"
+    ux_begin = int(time.mktime(begin.timetuple()))
+    ux_end = int(time.mktime(end.timetuple()))
+    n = 0
+    while n < len(tickers):
+        # Yahoo API limits max 10 tickers for comparision, or single for request
+        # Documentation https://www.yahoofinanceapi.com/
+        tickers_list = tickers[n:n + min( len(tickers) - n, 1 )]
+        # print(tickers_list)
+        n += 1
+        for retries in range(3):
+            try:
+                # result = requests.post(host, data = {"period1": ux_begin, "period2": ux_end, "interval": period, "includePrePost": "False", "events": "div,splits"}, timeout=2)
+                url = host + tickers_list[0] + "?period1={}&period2={}&interval={}&includePrePost=False&events=div%2Csplits".format( ux_begin, ux_end, period)
+                # print(url)
+                result = requests.get(url, timeout=2, headers={'User-agent': 'Mozilla/5.0'})
+                result = result.json()
+                break
+            except:
+                result = None
+        if result is not None:
+            for rec in result['chart']['result']:
+                hist[rec['meta']['symbol']] = {
+                    "Size": len(rec['indicators']['quote'][0]['close']),
+                    "Close": [float(x) for x in rec['indicators']['quote'][0]['close']],
+                    "Open": [float(x) for x in rec['indicators']['quote'][0]['open']],
+                    "High": [float(x) for x in rec['indicators']['quote'][0]['high']],
+                    "Low": [float(x) for x in rec['indicators']['quote'][0]['low']],
+                    "Volume": [float(x) for x in rec['indicators']['quote'][0]['volume']],
+                }
+    # print(hist)
+    return hist
+
 
 def google_ticker_to_yahoo( t ):
     ticker = t
@@ -36,33 +74,50 @@ def get_ticker_info( tickers ):
         time.sleep(1.0)
     return info
 
+
 def get_history_prices( tickers, period="1da" ):
     updated_tickers = []
     for t in tickers.split(' '):
         updated_tickers.append( google_ticker_to_yahoo( t ) )
     start = datetime.now() + timedelta(days=-7)
     end = datetime.now()
-    hist = []
-    for i in range(3):
-        try:
-            if len( updated_tickers ) > 1:
-                stock = yf.Tickers(' '.join(updated_tickers))
-            else:
-                stock = yf.Ticker(updated_tickers[0])
-            hist = stock.history(period="1da", start=start, end=end, progress = False, group_by='Ticker')
-            break
-        except Exception as e:
-            raise
-            hist = []
-            pass
-        time.sleep(1.0)
+    hist = request_yahoo_history(updated_tickers, start, end)
+    #exit(0)
+    #hist = []
+    #for i in range(3):
+    #    try:
+    #        if len( updated_tickers ) > 1:
+    #            stock = yf.Tickers(' '.join(updated_tickers))
+    #        else:
+    #            stock = yf.Ticker(updated_tickers[0])
+    #        hist = stock.history(period="1da", start=start, end=end, progress = False, group_by='Ticker')
+    #        break
+    #    except Exception as e:
+    #        raise
+    #        hist = []
+    #        pass
+    #    time.sleep(1.0)
     return hist
 
 class Stocks:
     def __init__(self):
         self._stocks = {}
         self._name = "<noname>"
-        self._ideas_mode = False
+        self._mode = "stock"
+
+    def load_from_summary(self, sheet):
+        vals = sheet.get_all_values()
+        self._mode = "summary"
+        self._name = "Summary"
+        if vals[7][4] == "#N/A":
+            self._total = 0
+        else:
+            self._total = float(vals[7][4].replace(',','.'))
+        if vals[7][3] == "#N/A":
+            self._investments = 1
+        else:
+            self._investments = float(vals[7][3].replace(',','.'))
+        return True
 
     def load_from_ideas(self, sheet):
         self._stocks = {}
@@ -71,7 +126,7 @@ class Stocks:
         vals = sheet.get_all_values()
         if vals[4][0] != "Ticker":
             return False
-        self._ideas_mode = True
+        self._mode = "ideas"
         armed = 0
         idx = 6
         tickers = []
@@ -115,7 +170,7 @@ class Stocks:
                     'max': max_price,
                     'start_date': start_date,
                     'target_date': target_date,
-                    'history': [], # get_history_prices( ticker ),
+                    'history': {"Size": 0}, # get_history_prices( ticker ),
                 }
             else:
                 armed += 1
@@ -136,7 +191,7 @@ class Stocks:
         if vals[10][0] != "Ticker":
             return False
         idx = 12
-        self._ideas_mode = False
+        self._mode = "stock"
         tickers = []
         while True:
             if idx >= len(vals):
@@ -179,14 +234,14 @@ class Stocks:
                     'max': 0,
                     'start_date': datetime.now(),
                     'target_date': datetime.now(),
-                    'history': [], # get_history_prices( ticker ),
+                    'history': {"Size": 0}, # get_history_prices( ticker ),
                 }
             else:
                 armed += 1
                 if armed > 5:
                     break
             idx = idx + 1
-        info = get_ticker_info( ' '.join(tickers) )
+        # info = get_ticker_info( ' '.join(tickers) )
         hist = get_history_prices( ' '.join(tickers) )
         for t in self._stocks:
             if google_ticker_to_yahoo(t) in hist:
@@ -227,10 +282,10 @@ class Stocks:
             elif self._stocks[r]["day_change"] > 0:
                 # Looking for the history data
                 hist = self._stocks[r]['history']
-                if hist is not None and len(hist) > 3:
+                if hist is not None and hist["Size"] > 3:
                     rise_change = 0
                     rise_days = 1
-                    for i in range(len(hist)):
+                    for i in range(hist["Size"]):
                         perc = round((self._stocks[r]['price'] - hist["Close"][-i-1]) * 100/self._stocks[r]['price'],1 )
                         if rise_change < perc:
                             rise_change = max([rise_change,perc])
@@ -249,10 +304,10 @@ class Stocks:
             elif self._stocks[r]["day_change"] < 0:
                 # Looking for the history data
                 hist = self._stocks[r]['history']
-                if hist is not None and len(hist) > 3:
+                if hist is not None and hist["Size"] > 3:
                     fall_change = 0
                     fall_days = 1
-                    for i in range(len(hist)):
+                    for i in range(hist["Size"]):
                         perc = round((self._stocks[r]['price'] - hist["Close"][-i-1]) * 100/self._stocks[r]['price'],1 )
                         if fall_change > perc:
                             fall_change = min([fall_change,perc])
@@ -294,16 +349,26 @@ class Stocks:
             result += a[1]
         return result
 
+    def get_summary(self):
+        result = ""
+        delta = round(self._total - self._investments,2)
+        result += u"\n\U00002716Portfolio: {} = {} {} {} ({}%)".format(
+            self._total, self._investments,
+            "\U00002796" if delta < 0 else u"\U00002795",
+            abs(delta),
+            round(abs(delta) / self._investments * 100,2))
+        return result
+
     def get_report(self):
-        result = u"\n=== {} ===".format(self._name)
-        if self._ideas_mode:
+        result = u"\n==== {} ====".format(self._name)
+        if self._mode == "ideas":
             r = self.find_to_buy()
             if len(r) > 0:
                 result += u"\n\n\U0001F31F Comfortable buy price:" + r
             r = self.find_near_to_buy()
             if len(r) > 0:
                 result += u"\n\n\U0001F31F Maybe to buy:" + r
-        else:
+        elif self._mode == "stock":
             r = self.find_for_sell()
             if len(r) > 0:
                 result += u"\n\n\U0001F31F Target reached:" + r
@@ -319,6 +384,8 @@ class Stocks:
             r = self.find_for_stop()
             if len(r) > 0:
                 result += u"\n\n\U0001F4DB Stop reached:" + r
+        elif self._mode == "summary":
+            result += u"\n\n\U0001F4B0" + self.get_summary()
         return result
 
 
@@ -329,18 +396,19 @@ def generate_stats_message( doc_name ):
         success = False
         try:
             gc = pygsheets.authorize()
-
             # You can open a spreadsheet by its title as it appears in Google Docs
             doc = gc.open( doc_name )
+            s = Stocks()
+            if s.load_from_summary( doc.worksheet('index', 0) ):
+                result += s.get_report() + "\n"
             stocks = []
-
-            for i in range(len(doc.worksheets())):
+            for i in range(1, len(doc.worksheets())):
                 s = Stocks()
                 if s.load_from_sheet( doc.worksheet('index', i)):
                     stocks.append( s )
                     result += s.get_report() + "\n"
                     # print(result)
-            for i in range(len(doc.worksheets())):
+            for i in range(1, len(doc.worksheets())):
                 s = Stocks()
                 if s.load_from_ideas( doc.worksheet('index', i)):
                     result += s.get_report() + "\n"
