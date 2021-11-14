@@ -7,6 +7,8 @@ import time
 import configparser
 import requests
 
+def request_yahoo_info(tickers):
+    pass
 
 def request_yahoo_history(tickers, begin, end, period = "1d"):
     hist = {}
@@ -33,12 +35,12 @@ def request_yahoo_history(tickers, begin, end, period = "1d"):
         if result is not None:
             for rec in result['chart']['result']:
                 hist[rec['meta']['symbol']] = {
-                    "Size": len(rec['indicators']['quote'][0]['close']),
-                    "Close": [float(x) for x in rec['indicators']['quote'][0]['close']],
-                    "Open": [float(x) for x in rec['indicators']['quote'][0]['open']],
-                    "High": [float(x) for x in rec['indicators']['quote'][0]['high']],
-                    "Low": [float(x) for x in rec['indicators']['quote'][0]['low']],
-                    "Volume": [float(x) for x in rec['indicators']['quote'][0]['volume']],
+                    "Size": len(list(filter(lambda x: x is not None, rec['indicators']['quote'][0]['close']))),
+                    "Close": [float(x) for x in filter(lambda x: x is not None, rec['indicators']['quote'][0]['close'])],
+                    "Open": [float(x) for x in filter(lambda x: x is not None, rec['indicators']['quote'][0]['open'])],
+                    "High": [float(x) for x in filter(lambda x: x is not None, rec['indicators']['quote'][0]['high'])],
+                    "Low": [float(x) for x in filter(lambda x: x is not None, rec['indicators']['quote'][0]['low'])],
+                    "Volume": [float(x) for x in filter(lambda x: x is not None, rec['indicators']['quote'][0]['volume'])],
                 }
     # print(hist)
     return hist
@@ -68,7 +70,7 @@ def get_ticker_info( tickers ):
             # stock.tickers[ticker].info
             break
         except Exception as e:
-            raise
+            # raise
             hist = []
             pass
         time.sleep(1.0)
@@ -79,7 +81,7 @@ def get_history_prices( tickers, period="1da" ):
     updated_tickers = []
     for t in tickers.split(' '):
         updated_tickers.append( google_ticker_to_yahoo( t ) )
-    start = datetime.now() + timedelta(days=-7)
+    start = datetime.now() + timedelta(days=-14)
     end = datetime.now()
     hist = request_yahoo_history(updated_tickers, start, end)
     #exit(0)
@@ -177,10 +179,10 @@ class Stocks:
                 if armed > 5:
                     break
             idx = idx + 1
-        hist = get_history_prices( ' '.join(tickers) )
-        for t in self._stocks:
-             if google_ticker_to_yahoo(t) in hist:
-                 self._stocks[t]['history'] = hist[google_ticker_to_yahoo(t)]
+        #hist = get_history_prices( ' '.join(tickers) )
+        #for t in self._stocks:
+        #     if google_ticker_to_yahoo(t) in hist:
+        #         self._stocks[t]['history'] = hist[google_ticker_to_yahoo(t)]
         return True if len(self._stocks)>0 else False
 
     def load_from_sheet(self, sheet):
@@ -251,25 +253,36 @@ class Stocks:
     def to_string(self):
         return "{}".format(self._stocks)
 
+    def get_ticker_presentation(self, r):
+        if self._stocks[r]['price'] < self._stocks[r]["stop"]:
+            return u"\U0001F534" + r
+        if self._stocks[r]['price'] > self._stocks[r]["target"]:
+            return u"\U0001F7E2" + r
+        if self._stocks[r]['price'] < self._stocks[r]['buy'] * 0.96:
+            return u"\U0001F7E1" + r
+        if self._stocks[r]['price'] > self._stocks[r]['buy'] * 1.04:
+            return u"\U0001F535" + r
+        return u"\U000026AA" + r
+
     def find_for_sell(self):
         result = ""
         for r in self._stocks:
             if self._stocks[r]['price'] > self._stocks[r]['target']:
-                result += u"\n\U00002716 {} {} > {}".format( r, self._stocks[r]['price'], self._stocks[r]['target'] )
+                result += u"\n{} {} > {}".format( self.get_ticker_presentation(r), self._stocks[r]['price'], self._stocks[r]['target'] )
         return result
 
     def find_for_stop(self):
         result = ""
         for r in self._stocks:
             if self._stocks[r]['price'] < self._stocks[r]['stop']:
-                result += u"\n\U00002716{} {} < {}".format( r, self._stocks[r]['price'], self._stocks[r]['stop'] )
+                result += u"\n{} {} < {}".format( self.get_ticker_presentation(r), self._stocks[r]['price'], self._stocks[r]['stop'] )
         return result
 
     def find_for_averaging(self):
         result = ""
         for r in self._stocks:
             if self._stocks[r]['change'] < -9.0 and self._stocks[r]['price'] > self._stocks[r]['stop']:
-                result += u"\n\U00002716{} {} < {} ({}%)".format( r, self._stocks[r]['price'], self._stocks[r]['buy'],
+                result += u"\n{} {} < {} ({}%)".format( self.get_ticker_presentation(r), self._stocks[r]['price'], self._stocks[r]['buy'],
                           round(self._stocks[r]['change'],1) )
         return result
 
@@ -277,7 +290,7 @@ class Stocks:
         result = ""
         for r in self._stocks:
             if self._stocks[r]['day_change'] >= 3.0:
-                result += u"\n\U00002716{} {} {} ({}% today)".format( r, self._stocks[r]['price'], self._stocks[r]['buy'],
+                result += u"\n{} {} {} ({}% today)".format( self.get_ticker_presentation(r), self._stocks[r]['price'], self._stocks[r]['buy'],
                           round(self._stocks[r]['day_change'], 1) )
             elif self._stocks[r]["day_change"] > 0:
                 # Looking for the history data
@@ -291,7 +304,7 @@ class Stocks:
                             rise_change = max([rise_change,perc])
                             rise_days = i + 1
                     if rise_change/rise_days > 1.0 and rise_days >= 3:
-                        result += u"\n\U00002716{} {} {} ({}% today, {}% in {} days)".format( r, self._stocks[r]['price'], self._stocks[r]['buy'],
+                        result += u"\n{} {} {} ({}% today, {}% in {} days)".format( self.get_ticker_presentation(r), self._stocks[r]['price'], self._stocks[r]['buy'],
                               round(self._stocks[r]['day_change'], 1), rise_change, rise_days)
         return result
 
@@ -299,7 +312,7 @@ class Stocks:
         result = ""
         for r in self._stocks:
             if self._stocks[r]['day_change'] <= -3.0:
-                result += u"\n\U00002716{} {} {} ({}% today)".format( r, self._stocks[r]['price'], self._stocks[r]['buy'],
+                result += u"\n{} {} {} ({}% today)".format( self.get_ticker_presentation(r), self._stocks[r]['price'], self._stocks[r]['buy'],
                           round(self._stocks[r]['day_change'], 1) )
             elif self._stocks[r]["day_change"] < 0:
                 # Looking for the history data
@@ -313,7 +326,7 @@ class Stocks:
                             fall_change = min([fall_change,perc])
                             fall_days = i + 1
                     if fall_change/fall_days < -0.8:
-                        result += u"\n\U00002716{} {} {} ({}% today, {}% in {} days)".format( r, self._stocks[r]['price'], self._stocks[r]['buy'],
+                        result += u"\n{} {} {} ({}% today, {}% in {} days)".format( self.get_ticker_presentation(r), self._stocks[r]['price'], self._stocks[r]['buy'],
                               round(self._stocks[r]['day_change'], 1), fall_change, fall_days)
         return result
 
@@ -323,10 +336,11 @@ class Stocks:
         for r in self._stocks:
             if self._stocks[r]["price"] >= self._stocks[r]["min"] and \
                self._stocks[r]["price"] <= self._stocks[r]["max"] and \
+               self._stocks[r]["price"] <= self._stocks[r]["target"] * 0.98 and \
                datetime.now() - self._stocks[r]["start_date"] < (self._stocks[r]["target_date"] - self._stocks[r]["start_date"])/2:
                 target_perc = round( (self._stocks[r]["target"] - self._stocks[r]['price']) / self._stocks[r]['price'] * 100, 1)
                 l.append( ( target_perc,
-                          u"\n\U00002716{} {} ({}%) in [{};{}] => {} (+{}%)".format(r, self._stocks[r]['price'],
+                          u"\n\U0001F4A1{} {} ({}%) in [{};{}] => {} (+{}%)".format(r, self._stocks[r]['price'],
                           self._stocks[r]["day_change"], self._stocks[r]["min"], self._stocks[r]["max"], self._stocks[r]["target"], target_perc) ) )
         l.sort(key=lambda rec: rec[0], reverse=True)
         for a in l:
@@ -338,11 +352,12 @@ class Stocks:
         result = ""
         for r in self._stocks:
             if self._stocks[r]["price"] > self._stocks[r]["max"] and \
+               self._stocks[r]["price"] <= self._stocks[r]["target"] * 0.98 and \
                self._stocks[r]["price"] <= self._stocks[r]["max"] + ( self._stocks[r]["target"] - self._stocks[r]["max"]) * 0.1 and \
                datetime.now() - self._stocks[r]["start_date"] < (self._stocks[r]["target_date"] - self._stocks[r]["start_date"])/2:
                 target_perc = round( (self._stocks[r]["target"] - self._stocks[r]['price']) / self._stocks[r]['price'] * 100, 1)
                 l.append( ( target_perc,
-                            u"\n\U00002716{} {} ({}%) > {} => {} (+{}%)".format(r, self._stocks[r]['price'],
+                            u"\n\U00002754{} {} ({}%) > {} => {} (+{}%)".format(r, self._stocks[r]['price'],
                             self._stocks[r]["day_change"], self._stocks[r]["max"], self._stocks[r]["target"], target_perc) ) )
         l.sort(key=lambda rec: rec[0], reverse=True)
         for a in l:
@@ -416,7 +431,7 @@ def generate_stats_message( doc_name ):
             success = True
         except:
             result = ""
-            raise
+            # raise
             pass
         if success:
             break
