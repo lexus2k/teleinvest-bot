@@ -2,7 +2,7 @@
 import pygsheets
 from datetime import datetime, timedelta
 import time
-import yfinance as yf
+# import yfinance as yf
 import time
 import configparser
 import requests
@@ -56,25 +56,25 @@ def google_ticker_to_yahoo( t ):
         ticker = ticker[5:]
     return ticker
 
-def get_ticker_info( tickers ):
-    updated_tickers = []
-    for t in tickers.split(' '):
-        updated_tickers.append( google_ticker_to_yahoo( t ) )
-    info = None
-    for i in range(3):
-        try:
-            if len( updated_tickers ) > 1:
-                stock = yf.Tickers(updated_tickers)
-            else:
-                stock = yf.Ticker(updated_tickers[0])
-            # stock.tickers[ticker].info
-            break
-        except Exception as e:
-            # raise
-            hist = []
-            pass
-        time.sleep(1.0)
-    return info
+#def get_ticker_info( tickers ):
+#    updated_tickers = []
+#    for t in tickers.split(' '):
+#        updated_tickers.append( google_ticker_to_yahoo( t ) )
+#    info = None
+#    for i in range(3):
+#        try:
+#            if len( updated_tickers ) > 1:
+#                stock = yf.Tickers(updated_tickers)
+#            else:
+#                stock = yf.Ticker(updated_tickers[0])
+#            # stock.tickers[ticker].info
+#            break
+#        except Exception as e:
+#            # raise
+#            hist = []
+#            pass
+#        time.sleep(1.0)
+#    return info
 
 
 def get_history_prices( tickers, period="1da" ):
@@ -84,22 +84,205 @@ def get_history_prices( tickers, period="1da" ):
     start = datetime.now() + timedelta(days=-14)
     end = datetime.now()
     hist = request_yahoo_history(updated_tickers, start, end)
-    #exit(0)
-    #hist = []
-    #for i in range(3):
-    #    try:
-    #        if len( updated_tickers ) > 1:
-    #            stock = yf.Tickers(' '.join(updated_tickers))
-    #        else:
-    #            stock = yf.Ticker(updated_tickers[0])
-    #        hist = stock.history(period="1da", start=start, end=end, progress = False, group_by='Ticker')
-    #        break
-    #    except Exception as e:
-    #        raise
-    #        hist = []
-    #        pass
-    #    time.sleep(1.0)
     return hist
+
+
+class Stock:
+    def __init__(self, ticker):
+        self._ticker = ticker
+        self._count = 0
+        self._bid = 0
+        self._day_change = 0
+        self._change = 0
+        self._target = 0
+        self._stop = 0
+        self._min_price = 0
+        self._max_price = 0
+        self._buy_price = 0 # Average price of buys
+        self._target_date = datetime.now()
+        self._start_date = datetime.now()
+        self._end_date = datetime.now()
+        self._history = []
+
+    def load_as_asset(self, record):
+        try:
+            self._buy_price = float(record[1].replace(',','.'))
+            self._count = int(record[2].replace(',','.'))
+            if record[4] == "#N/A":
+                self._change = 0
+            else:
+                self._change = float(record[4].replace(',','.')[:-1])
+            if record[6] == "#N/A":
+                self._day_change = 0
+            else:
+                self._day_change = float(record[6].replace(',','.')[:-1])
+            if record[7] == "#N/A":
+                self._bid = 0
+            else:
+                self._bid = float(record[7].replace(',','.'))
+            if record[13] == "#N/A":
+                self._target = 0
+            else:
+                self._target = float(record[13].replace(',','.'))
+            if record[12] == "#N/A":
+                self._stop = 0
+            else:
+                self._stop = float(record[12].replace(',','.'))
+            hist = get_history_prices( self._ticker )
+            if google_ticker_to_yahoo(self._ticker) in hist:
+                self._history = hist[google_ticker_to_yahoo(self._ticker)]
+        except:
+            raise
+            return False
+        return True
+
+    def load_as_idea(self, record):
+        try:
+            if record[2] =="":
+                self._start_date = datetime.now()
+            else:
+                self._start_date = datetime.strptime( record[2], "%d.%m.%Y" )
+            if record[3] == "#N/A":
+                self._day_change = 0
+            else:
+                self._day_change = float(record[3].replace(',','.')[:-1])
+            if record[4] == "#N/A":
+                self._bid = 0
+            else:
+                self._bid = float(record[4].replace(',','.'))
+            self._min_price = float(record[7].replace(',','.'))
+            self._max_price = float(record[8].replace(',','.'))
+            self._stop = float(record[9].replace(',','.'))
+            self._target = float(record[10].replace(',','.'))
+            if  record[11] == "":
+                self._target_date = datetime.now()
+            else:
+                self._target_date = datetime.strptime( record[11], "%d.%m.%Y" )
+            self._history = []
+        except:
+            raise
+            return False
+        return True
+
+    def get_ticker_presentation(self):
+        if self._bid < self._stop:
+            return u"\U0001F534" + self._ticker
+        if self._bid > self._target:
+            return u"\U0001F7E2" + self._ticker
+        if self._bid < self._buy_price * 0.96:
+            return u"\U0001F7E1" + self._ticker
+        if self._bid > self._buy_price * 1.04:
+            return u"\U0001F535" + self._ticker
+        return u"\U000026AA" + self._ticker
+
+    def is_profit(self):
+        return self._bid > self._target
+
+    def get_profit_report(self):
+        return u"\n{} {} > {}".format( self.get_ticker_presentation(), self._bid, self._target )
+
+    def is_loss(self):
+        return self._bid < self._stop
+
+    def get_loss_report(self):
+        return u"\n{} {} < {}".format( self.get_ticker_presentation(), self._bid, self._stop )
+
+    def is_averaging_required(self):
+        return self._change < -9.0 and self._bid > self._stop
+
+    def get_averaging_report(self):
+        return u"\n{} {} < {} ({}%)".format( self.get_ticker_presentation(), self._bid, self._buy_price, round(self._change,1) )
+
+    def is_high_grow(self):
+        if self._day_change >= 3.0:
+            return True
+        if self._day_change > 0:
+            # Looking for the history data
+            hist = self._history
+            if hist is not None and hist["Size"] > 3:
+                rise_change = 0
+                rise_days = 1
+                for i in range(hist["Size"]):
+                    perc = round((self._bid - hist["Close"][-i-1]) * 100/self._bid,1 )
+                    if rise_change < perc:
+                        rise_change = max([rise_change,perc])
+                        rise_days = i + 1
+                if rise_change/rise_days > 1.0 and rise_days >= 3:
+                    return True
+        return False
+
+    def get_grow_report(self):
+        # Looking for the history data
+        hist = self._history
+        if hist is not None and hist["Size"] > 3:
+            rise_change = 0
+            rise_days = 1
+            for i in range(hist["Size"]):
+                perc = round((self._bid - hist["Close"][-i-1]) * 100/self._bid,1 )
+                if rise_change < perc:
+                    rise_change = max([rise_change,perc])
+                    rise_days = i + 1
+            return u"\n{} {} {} ({}% today, {}% in {} days)".format( self.get_ticker_presentation(), self._bid, self._buy_price,
+                       round(self._day_change, 1), rise_change, rise_days)
+        return u"\n{} {} {} ({}% today)".format( self.get_ticker_presentation(), self._bid, self._buy_price,
+                 round(self._day_change, 1))
+
+    def is_high_fall(self):
+        if self._day_change <= -3.0:
+            return True
+        if self._day_change < 0:
+            hist = self._history
+            if hist is not None and hist["Size"] > 3:
+                fall_change = 0
+                fall_days = 1
+                for i in range(hist["Size"]):
+                    perc = round((self._bid - hist["Close"][-i-1]) * 100/self._bid,1 )
+                    if fall_change > perc:
+                        fall_change = min([fall_change,perc])
+                        fall_days = i + 1
+                if fall_change/fall_days < -0.8:
+                    return True
+        return False
+
+    def get_fall_report(self):
+        hist = self._history
+        if hist is not None and hist["Size"] > 3:
+            fall_change = 0
+            fall_days = 1
+            for i in range(hist["Size"]):
+                perc = round((self._bid - hist["Close"][-i-1]) * 100/self._bid,1 )
+                if fall_change > perc:
+                    fall_change = min([fall_change,perc])
+                    fall_days = i + 1
+            return u"\n{} {} {} ({}% today, {}% in {} days)".format( self.get_ticker_presentation(), self._bid, self._buy_price,
+                              round(self._day_change, 1), fall_change, fall_days)
+        return u"\n{} {} {} ({}% today)".format( self.get_ticker_presentation(), self._bid, self._buy_price, round(self._day_change, 1) )
+
+
+    def is_worth_buying(self):
+        return self._bid >= self._min_price and \
+            self._bid <= self._max_price and \
+            self._bid <= self._target * 0.98 and \
+            datetime.now() - self._start_date < (self._target_date - self._start_date)/2
+
+    def get_buying_report(self):
+        target_perc = round( (self._target - self._bid) / self._bid * 100, 1)
+        return ( target_perc,
+                 u"\n\U0001F4A1{} {} ({}%) in [{};{}] => {} (+{}%)".format( self._ticker, self._bid,
+                          self._day_change, self._min_price, self._max_price, self._target, target_perc) )
+
+    def is_almost_worth_buying(self):
+        return self._bid > self._max_price and \
+               self._bid <= self._target * 0.98 and \
+               self._bid <= self._max_price + ( self._target - self._max_price) * 0.1 and \
+               datetime.now() - self._start_date < (self._target_date - self._start_date)/2
+
+    def get_almost_buying_report(self):
+        target_perc = round( (self._target - self._bid) / self._bid * 100, 1)
+        return ( target_perc, u"\n\U00002754{} {} ({}%) > {} => {} (+{}%)".format(self._ticker, self._bid,
+                 self._day_change, self._max_price, self._target, target_perc) )
+
+
 
 class Stocks:
     def __init__(self):
@@ -138,51 +321,14 @@ class Stocks:
             ticker = vals[idx][0] # sheet.cell('A{}'.format(idx)).value
             if ticker != "" and ord(ticker[0]) in range(ord('A'),ord('Z')):
                 armed = 0
-                tickers.append( ticker )
-                if vals[idx][2] =="":
-                    start_date = datetime.now()
-                else:
-                    start_date = datetime.strptime( vals[idx][2], "%d.%m.%Y" )
-                if vals[idx][3] == "#N/A":
-                    day_change = 0
-                else:
-                    day_change = float(vals[idx][3].replace(',','.')[:-1])
-                if vals[idx][4] == "#N/A":
-                    current_price = 0
-                else:
-                    current_price = float(vals[idx][4].replace(',','.'))
-                min_price = float(vals[idx][7].replace(',','.'))
-                max_price = float(vals[idx][8].replace(',','.'))
-                stop = float(vals[idx][9].replace(',','.'))
-                target = float(vals[idx][10].replace(',','.'))
-                if  vals[idx][11] == "":
-                    target_date = datetime.now()
-                else:
-                    target_date = datetime.strptime( vals[idx][11], "%d.%m.%Y" )
-
-                self._stocks[ticker] = {
-                    'buy': 0,
-                    'count': 0,
-                    'change': 0,
-                    'day_change': day_change,
-                    'price': current_price,
-                    'target': target,
-                    'stop': stop,
-                    'min': min_price,
-                    'max': max_price,
-                    'start_date': start_date,
-                    'target_date': target_date,
-                    'history': {"Size": 0}, # get_history_prices( ticker ),
-                }
+                stock = Stock(ticker)
+                if stock.load_as_idea(vals[idx]):
+                    self._stocks[ticker] = stock
             else:
                 armed += 1
                 if armed > 5:
                     break
             idx = idx + 1
-        #hist = get_history_prices( ' '.join(tickers) )
-        #for t in self._stocks:
-        #     if google_ticker_to_yahoo(t) in hist:
-        #         self._stocks[t]['history'] = hist[google_ticker_to_yahoo(t)]
         return True if len(self._stocks)>0 else False
 
     def load_from_sheet(self, sheet):
@@ -201,147 +347,60 @@ class Stocks:
             ticker = vals[idx][0] # sheet.cell('A{}'.format(idx)).value
             if ticker != "" and ord(ticker[0]) in range(ord('A'),ord('Z')):
                 armed = 0
-                tickers.append( ticker )
-                buy_price = float(vals[idx][1].replace(',','.'))
-                count = int(vals[idx][2].replace(',','.'))
-                if vals[idx][4] == "#N/A":
-                    change = 0
-                else:
-                    change = float(vals[idx][4].replace(',','.')[:-1])
-                if vals[idx][6] == "#N/A":
-                    day_change = 0
-                else:
-                    day_change = float(vals[idx][6].replace(',','.')[:-1])
-                if vals[idx][7] == "#N/A":
-                    current_price = 0
-                else:
-                    current_price = float(vals[idx][7].replace(',','.'))
-                if vals[idx][13] == "#N/A":
-                    target = 0
-                else:
-                    target = float(vals[idx][13].replace(',','.'))
-                if vals[idx][12] == "#N/A":
-                    stop = 0
-                else:
-                    stop = float(vals[idx][12].replace(',','.'))
-                self._stocks[ticker] = {
-                    'buy': buy_price,
-                    'count': count,
-                    'change': change,
-                    'day_change': day_change,
-                    'price': current_price,
-                    'target': target,
-                    'stop': stop,
-                    'min': 0,
-                    'max': 0,
-                    'start_date': datetime.now(),
-                    'target_date': datetime.now(),
-                    'history': {"Size": 0}, # get_history_prices( ticker ),
-                }
+                stock = Stock(ticker)
+                if stock.load_as_asset(vals[idx]):
+                    self._stocks[ticker] = stock
             else:
                 armed += 1
                 if armed > 5:
                     break
             idx = idx + 1
-        # info = get_ticker_info( ' '.join(tickers) )
-        hist = get_history_prices( ' '.join(tickers) )
-        for t in self._stocks:
-            if google_ticker_to_yahoo(t) in hist:
-                self._stocks[t]['history'] = hist[google_ticker_to_yahoo(t)]
         return True if len(self._stocks)>0 else False
 
     def to_string(self):
         return "{}".format(self._stocks)
 
-    def get_ticker_presentation(self, r):
-        if self._stocks[r]['price'] < self._stocks[r]["stop"]:
-            return u"\U0001F534" + r
-        if self._stocks[r]['price'] > self._stocks[r]["target"]:
-            return u"\U0001F7E2" + r
-        if self._stocks[r]['price'] < self._stocks[r]['buy'] * 0.96:
-            return u"\U0001F7E1" + r
-        if self._stocks[r]['price'] > self._stocks[r]['buy'] * 1.04:
-            return u"\U0001F535" + r
-        return u"\U000026AA" + r
-
     def find_for_sell(self):
         result = ""
         for r in self._stocks:
-            if self._stocks[r]['price'] > self._stocks[r]['target']:
-                result += u"\n{} {} > {}".format( self.get_ticker_presentation(r), self._stocks[r]['price'], self._stocks[r]['target'] )
+            if self._stocks[r].is_profit():
+                result += self._stocks[r].get_profit_report()
         return result
 
     def find_for_stop(self):
         result = ""
         for r in self._stocks:
-            if self._stocks[r]['price'] < self._stocks[r]['stop']:
-                result += u"\n{} {} < {}".format( self.get_ticker_presentation(r), self._stocks[r]['price'], self._stocks[r]['stop'] )
+            if self._stocks[r].is_loss():
+                result += self._stocks[r].get_loss_report()
         return result
 
     def find_for_averaging(self):
         result = ""
         for r in self._stocks:
-            if self._stocks[r]['change'] < -9.0 and self._stocks[r]['price'] > self._stocks[r]['stop']:
-                result += u"\n{} {} < {} ({}%)".format( self.get_ticker_presentation(r), self._stocks[r]['price'], self._stocks[r]['buy'],
-                          round(self._stocks[r]['change'],1) )
+            if self._stocks[r].is_averaging_required():
+                result += self._stocks[r].get_averaging_report()
         return result
 
     def find_high_grow(self):
         result = ""
         for r in self._stocks:
-            if self._stocks[r]['day_change'] >= 3.0:
-                result += u"\n{} {} {} ({}% today)".format( self.get_ticker_presentation(r), self._stocks[r]['price'], self._stocks[r]['buy'],
-                          round(self._stocks[r]['day_change'], 1) )
-            elif self._stocks[r]["day_change"] > 0:
-                # Looking for the history data
-                hist = self._stocks[r]['history']
-                if hist is not None and hist["Size"] > 3:
-                    rise_change = 0
-                    rise_days = 1
-                    for i in range(hist["Size"]):
-                        perc = round((self._stocks[r]['price'] - hist["Close"][-i-1]) * 100/self._stocks[r]['price'],1 )
-                        if rise_change < perc:
-                            rise_change = max([rise_change,perc])
-                            rise_days = i + 1
-                    if rise_change/rise_days > 1.0 and rise_days >= 3:
-                        result += u"\n{} {} {} ({}% today, {}% in {} days)".format( self.get_ticker_presentation(r), self._stocks[r]['price'], self._stocks[r]['buy'],
-                              round(self._stocks[r]['day_change'], 1), rise_change, rise_days)
+            if self._stocks[r].is_high_grow():
+                result += self._stocks[r].get_grow_report()
         return result
 
     def find_high_fall(self):
         result = ""
         for r in self._stocks:
-            if self._stocks[r]['day_change'] <= -3.0:
-                result += u"\n{} {} {} ({}% today)".format( self.get_ticker_presentation(r), self._stocks[r]['price'], self._stocks[r]['buy'],
-                          round(self._stocks[r]['day_change'], 1) )
-            elif self._stocks[r]["day_change"] < 0:
-                # Looking for the history data
-                hist = self._stocks[r]['history']
-                if hist is not None and hist["Size"] > 3:
-                    fall_change = 0
-                    fall_days = 1
-                    for i in range(hist["Size"]):
-                        perc = round((self._stocks[r]['price'] - hist["Close"][-i-1]) * 100/self._stocks[r]['price'],1 )
-                        if fall_change > perc:
-                            fall_change = min([fall_change,perc])
-                            fall_days = i + 1
-                    if fall_change/fall_days < -0.8:
-                        result += u"\n{} {} {} ({}% today, {}% in {} days)".format( self.get_ticker_presentation(r), self._stocks[r]['price'], self._stocks[r]['buy'],
-                              round(self._stocks[r]['day_change'], 1), fall_change, fall_days)
+            if self._stocks[r].is_high_fall():
+                result += self._stocks[r].get_fall_report()
         return result
 
     def find_to_buy(self):
         l = []
         result = ""
         for r in self._stocks:
-            if self._stocks[r]["price"] >= self._stocks[r]["min"] and \
-               self._stocks[r]["price"] <= self._stocks[r]["max"] and \
-               self._stocks[r]["price"] <= self._stocks[r]["target"] * 0.98 and \
-               datetime.now() - self._stocks[r]["start_date"] < (self._stocks[r]["target_date"] - self._stocks[r]["start_date"])/2:
-                target_perc = round( (self._stocks[r]["target"] - self._stocks[r]['price']) / self._stocks[r]['price'] * 100, 1)
-                l.append( ( target_perc,
-                          u"\n\U0001F4A1{} {} ({}%) in [{};{}] => {} (+{}%)".format(r, self._stocks[r]['price'],
-                          self._stocks[r]["day_change"], self._stocks[r]["min"], self._stocks[r]["max"], self._stocks[r]["target"], target_perc) ) )
+            if self._stocks[r].is_worth_buying():
+                l.append( self._stocks[r].get_buying_report() )
         l.sort(key=lambda rec: rec[0], reverse=True)
         for a in l:
             result += a[1]
@@ -351,14 +410,8 @@ class Stocks:
         l = []
         result = ""
         for r in self._stocks:
-            if self._stocks[r]["price"] > self._stocks[r]["max"] and \
-               self._stocks[r]["price"] <= self._stocks[r]["target"] * 0.98 and \
-               self._stocks[r]["price"] <= self._stocks[r]["max"] + ( self._stocks[r]["target"] - self._stocks[r]["max"]) * 0.1 and \
-               datetime.now() - self._stocks[r]["start_date"] < (self._stocks[r]["target_date"] - self._stocks[r]["start_date"])/2:
-                target_perc = round( (self._stocks[r]["target"] - self._stocks[r]['price']) / self._stocks[r]['price'] * 100, 1)
-                l.append( ( target_perc,
-                            u"\n\U00002754{} {} ({}%) > {} => {} (+{}%)".format(r, self._stocks[r]['price'],
-                            self._stocks[r]["day_change"], self._stocks[r]["max"], self._stocks[r]["target"], target_perc) ) )
+            if self._stocks[r].is_almost_worth_buying():
+                l.append( self._stocks[r].get_almost_buying_report() )
         l.sort(key=lambda rec: rec[0], reverse=True)
         for a in l:
             result += a[1]
@@ -431,7 +484,7 @@ def generate_stats_message( doc_name ):
             success = True
         except:
             result = ""
-            # raise
+            raise
             pass
         if success:
             break
