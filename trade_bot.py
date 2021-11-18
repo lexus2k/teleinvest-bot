@@ -1,4 +1,25 @@
 #!/usr/bin/python3
+
+
+### Generic Bid, Ask, PE, etc.
+### https://query2.finance.yahoo.com/v11/finance/quoteSummary/SBER.ME?modules=summaryDetail
+### https://query2.finance.yahoo.com/v11/finance/quoteSummary/AAPL?modules=defaultKeyStatistics
+### Pre and post and regular market prices
+### https://query2.finance.yahoo.com/v11/finance/quoteSummary/AAPL?modules=price
+### Bids, Asks Volumes, 50-days Averages
+### https://query2.finance.yahoo.com//v7/finance/options/AAPL
+### Recommendations and Trends:
+### https://query2.finance.yahoo.com/v11/finance/quoteSummary/SBER.ME?modules=financialData
+### https://query2.finance.yahoo.com/v11/finance/quoteSummary/AAPL?modules=recommendationTrend
+### Insiders Trading
+### https://query2.finance.yahoo.com/v11/finance/quoteSummary/AAPL?modules=insiderTransactions
+### Index Trends
+### https://query2.finance.yahoo.com/v11/finance/quoteSummary/AAPL?modules=indexTrend
+### Institution
+### https://query2.finance.yahoo.com/v11/finance/quoteSummary/AAPL?modules=institutionOwnership
+
+
+
 import pygsheets
 from datetime import datetime, timedelta
 import time
@@ -86,6 +107,58 @@ def get_history_prices( tickers, period="1da" ):
     hist = request_yahoo_history(updated_tickers, start, end)
     return hist
 
+class TickerInfo:
+    def __init__(self, ticker):
+        self._ticker = ticker
+        self._update_time = datetime.now() + timedelta(minutes = -30)
+        self._target_min_price = 0
+        self._target_max_price = 0
+        self._target_mean_price = 0
+        self._current_price = 0
+        self._request_data()
+        # self._update_time = datetime.now() # + timedelta(minutes=-25)
+
+    def _update(self):
+        if datetime.now() - self._update_time < timedelta(minutes=15):
+            return
+        self._request_data()
+
+    def _request_data(self):
+        host = "https://query2.finance.yahoo.com/"
+        for retries in range(3):
+            try:
+                url = host + "v11/finance/quoteSummary/" + google_ticker_to_yahoo(self._ticker) + "?modules=financialData,defaultKeyStatistics,indexTrend,summaryDetail"
+                result = requests.get(url, timeout=2, headers={'User-agent': 'Mozilla/5.0'})
+                result = result.json()
+                break
+            except:
+                result = None
+        if result is not None and result["quoteSummary"]["result"] is not None:
+            fd = result["quoteSummary"]["result"][0]["financialData"]
+            dks = result["quoteSummary"]["result"][0]["defaultKeyStatistics"]
+            it = result["quoteSummary"]["result"][0]["indexTrend"]
+            sd = result["quoteSummary"]["result"][0]["summaryDetail"] # beta, forwardPE, trailingPE, 
+            self._current_price = float(fd["currentPrice"]["raw"])
+            if len(fd["targetLowPrice"])>0:
+                self._target_min_price = float(fd["targetLowPrice"]["raw"])
+            if len(fd["targetHighPrice"])>0:
+                self._target_max_price = float(fd["targetHighPrice"]["raw"])
+            if len(fd["targetMeanPrice"])>0:
+                self._target_mean_price = float(fd["targetMeanPrice"]["raw"])
+            self._key = fd["recommendationKey"]
+            self._forward_pe = float(dks["forwardPE"]["raw"])
+            self._peg = float(dks["pegRatio"]["raw"])
+            self._index_pe = float(it["peRatio"]["raw"])
+            self._index_peg = float(it["pegRatio"]["raw"])
+            self._update_time = datetime.now()
+
+    def to_string(self):
+        self._update()
+        result = u"\n\U0001F4A1{}".format(self._ticker)
+        if self._current_price > 0:
+            result += "\n{} => [{},{}] Mean {} ({}%) ({}) ".format(self._current_price, self._target_min_price,  self._target_max_price,
+                self._target_mean_price, round((self._target_mean_price - self._current_price)/self._current_price*100,1), self._key )
+        return result
 
 class Stock:
     def __init__(self, ticker):
@@ -456,6 +529,9 @@ class Stocks:
             result += u"\n\n\U0001F4B0" + self.get_summary()
         return result
 
+def generate_info_message( ticker ):
+    t = TickerInfo(ticker)
+    return t.to_string()
 
 def generate_stats_message( doc_name ):
     result = ""
@@ -500,4 +576,5 @@ if __name__=="__main__":
     if len( config.read( 'config.ini')) > 0:
         if config.has_option('main', 'sheets'):
             main_doc = config.get('main', 'sheets')
+    # print(generate_info_message("Visa"))
     print(generate_stats_message(main_doc))

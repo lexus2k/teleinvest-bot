@@ -70,7 +70,9 @@ def process_text_message(token, msg, chat_id):
         if msg != "":
             telegram_send( token, msg, chat_id )
     else:
-        telegram_send( token, blue_emoji + msg, chat_id )
+        msg = trade_bot.generate_info_message( msg.upper() )
+        if msg != "":
+            telegram_send( token, msg, chat_id )
 
 telegram_bot_token = None
 main_chat_id = None
