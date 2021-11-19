@@ -108,20 +108,49 @@ def get_history_prices( tickers, period="1da" ):
     return hist
 
 class TickerInfo:
-    def __init__(self, ticker):
+    def __init__(self, ticker, autoload = True):
         self._ticker = ticker
-        self._update_time = datetime.now() + timedelta(minutes = -30)
+        self._history = None
+        self._update_time = datetime.now() + timedelta(minutes = -50)
+        self._history_update_time = datetime.now() + timedelta(minutes = -50)
         self._target_min_price = 0
         self._target_max_price = 0
         self._target_mean_price = 0
         self._current_price = 0
-        self._request_data()
+        if autoload:
+           self._request_data()
         # self._update_time = datetime.now() # + timedelta(minutes=-25)
 
     def _update(self):
         if datetime.now() - self._update_time < timedelta(minutes=15):
             return
         self._request_data()
+
+    def _update_history(self):
+        if datetime.now() - self._history_update_time < timedelta(minutes=15):
+            return
+        self._history = get_history_prices(google_ticker_to_yahoo(self._ticker))[google_ticker_to_yahoo(self._ticker)]
+        self._history_update_time = datetime.now()
+
+    @property
+    def current_price(self):
+        self._update()
+        return self._current_price
+
+    @property
+    def target_min_price(self):
+        self._update()
+        return self._target_min_price
+
+    @property
+    def target_max_price(self):
+        self._update()
+        return self._target_max_price
+
+    @property
+    def target_mean_price(self):
+        self._update()
+        return self._target_mean_price
 
     def _request_data(self):
         host = "https://query2.finance.yahoo.com/"
@@ -146,11 +175,20 @@ class TickerInfo:
             if len(fd["targetMeanPrice"])>0:
                 self._target_mean_price = float(fd["targetMeanPrice"]["raw"])
             self._key = fd["recommendationKey"]
-            self._forward_pe = float(dks["forwardPE"]["raw"])
-            self._peg = float(dks["pegRatio"]["raw"])
-            self._index_pe = float(it["peRatio"]["raw"])
-            self._index_peg = float(it["pegRatio"]["raw"])
+            if len(dks["forwardPE"]) > 0:
+                self._forward_pe = float(dks["forwardPE"]["raw"])
+            if len(dks["pegRatio"]) > 0:
+                self._peg = float(dks["pegRatio"]["raw"])
+            if len(it["peRatio"]) > 0:
+                self._index_pe = float(it["peRatio"]["raw"])
+            if len(it["pegRatio"]) > 0:
+                self._index_peg = float(it["pegRatio"]["raw"])
             self._update_time = datetime.now()
+
+    @property
+    def history(self):
+        self._update_history()
+        return self._history
 
     def to_string(self):
         self._update()
@@ -160,11 +198,28 @@ class TickerInfo:
                 self._target_mean_price, round((self._target_mean_price - self._current_price)/self._current_price*100,1), self._key )
         return result
 
+class StockExchange:
+
+    def __init__(self):
+        self._tickers = {}
+
+    def get_stock(self, ticker):
+        if ticker in self._tickers:
+            return self._tickers[ticker]
+        stock = TickerInfo( ticker, autoload = False )
+        self._tickers[ticker] = stock
+        return stock
+
 class Stock:
-    def __init__(self, ticker):
+    def __init__(self, ticker, exchange = None):
+        self._exchange = exchange
+        if self._exchange is None:
+            self._info = TickerInfo(ticker, autoload = False)
+        else:
+            self._info = exchange.get_stock(ticker)
         self._ticker = ticker
         self._count = 0
-        self._bid = 0
+        self._current_price = 0
         self._day_change = 0
         self._change = 0
         self._target = 0
@@ -175,7 +230,6 @@ class Stock:
         self._target_date = datetime.now()
         self._start_date = datetime.now()
         self._end_date = datetime.now()
-        self._history = []
 
     def load_as_asset(self, record):
         try:
@@ -190,9 +244,11 @@ class Stock:
             else:
                 self._day_change = float(record[6].replace(',','.')[:-1])
             if record[7] == "#N/A":
-                self._bid = 0
+                self._current_price = 0
             else:
-                self._bid = float(record[7].replace(',','.'))
+                self._current_price = float(record[7].replace(',','.'))
+            if self._current_price == 0:
+                self._current_price = self._info.current_price
             if record[13] == "#N/A":
                 self._target = 0
             else:
@@ -201,9 +257,6 @@ class Stock:
                 self._stop = 0
             else:
                 self._stop = float(record[12].replace(',','.'))
-            hist = get_history_prices( self._ticker )
-            if google_ticker_to_yahoo(self._ticker) in hist:
-                self._history = hist[google_ticker_to_yahoo(self._ticker)]
         except:
             raise
             return False
@@ -220,9 +273,9 @@ class Stock:
             else:
                 self._day_change = float(record[3].replace(',','.')[:-1])
             if record[4] == "#N/A":
-                self._bid = 0
+                self._current_price = 0
             else:
-                self._bid = float(record[4].replace(',','.'))
+                self._current_price = float(record[4].replace(',','.'))
             self._min_price = float(record[7].replace(',','.'))
             self._max_price = float(record[8].replace(',','.'))
             self._stop = float(record[9].replace(',','.'))
@@ -231,52 +284,51 @@ class Stock:
                 self._target_date = datetime.now()
             else:
                 self._target_date = datetime.strptime( record[11], "%d.%m.%Y" )
-            self._history = []
         except:
             raise
             return False
         return True
 
     def get_ticker_presentation(self):
-        if self._bid < self._stop:
+        if self._current_price < self._stop:
             return u"\U0001F534" + self._ticker
-        if self._bid > self._target:
+        if self._current_price > self._target:
             return u"\U0001F7E2" + self._ticker
-        if self._bid < self._buy_price * 0.96:
+        if self._current_price < self._buy_price * 0.96:
             return u"\U0001F7E1" + self._ticker
-        if self._bid > self._buy_price * 1.04:
+        if self._current_price > self._buy_price * 1.04:
             return u"\U0001F535" + self._ticker
         return u"\U000026AA" + self._ticker
 
     def is_profit(self):
-        return self._bid > self._target
+        return self._current_price > self._target
 
     def get_profit_report(self):
-        return u"\n{} {} > {}".format( self.get_ticker_presentation(), self._bid, self._target )
+        return u"\n{} {} > {}".format( self.get_ticker_presentation(), self._current_price, self._target )
 
     def is_loss(self):
-        return self._bid < self._stop
+        return self._current_price < self._stop
 
     def get_loss_report(self):
-        return u"\n{} {} < {}".format( self.get_ticker_presentation(), self._bid, self._stop )
+        return u"\n{} {} < {}".format( self.get_ticker_presentation(), self._current_price, self._stop )
 
     def is_averaging_required(self):
-        return self._change < -9.0 and self._bid > self._stop
+        return self._change < -9.0 and self._current_price > self._stop
 
     def get_averaging_report(self):
-        return u"\n{} {} < {} ({}%)".format( self.get_ticker_presentation(), self._bid, self._buy_price, round(self._change,1) )
+        return u"\n{} {} < {} ({}%)".format( self.get_ticker_presentation(), self._current_price, self._buy_price, round(self._change,1) )
 
     def is_high_grow(self):
         if self._day_change >= 3.0:
             return True
         if self._day_change > 0:
             # Looking for the history data
-            hist = self._history
+            hist = self._info.history
             if hist is not None and hist["Size"] > 3:
                 rise_change = 0
                 rise_days = 1
                 for i in range(hist["Size"]):
-                    perc = round((self._bid - hist["Close"][-i-1]) * 100/self._bid,1 )
+                    perc = round((self._current_price - hist["Close"][-i-1]) * 100/self._current_price,1 )
                     if rise_change < perc:
                         rise_change = max([rise_change,perc])
                         rise_days = i + 1
@@ -285,31 +337,33 @@ class Stock:
         return False
 
     def get_grow_report(self):
+        if self._exchange is None:
+            return False
         # Looking for the history data
-        hist = self._history
+        hist = self._info.history
         if hist is not None and hist["Size"] > 3:
             rise_change = 0
             rise_days = 1
             for i in range(hist["Size"]):
-                perc = round((self._bid - hist["Close"][-i-1]) * 100/self._bid,1 )
+                perc = round((self._current_price - hist["Close"][-i-1]) * 100/self._current_price,1 )
                 if rise_change < perc:
                     rise_change = max([rise_change,perc])
                     rise_days = i + 1
-            return u"\n{} {} {} ({}% today, {}% in {} days)".format( self.get_ticker_presentation(), self._bid, self._buy_price,
+            return u"\n{} {} {} ({}% today, {}% in {} days)".format( self.get_ticker_presentation(), self._current_price, self._buy_price,
                        round(self._day_change, 1), rise_change, rise_days)
-        return u"\n{} {} {} ({}% today)".format( self.get_ticker_presentation(), self._bid, self._buy_price,
+        return u"\n{} {} {} ({}% today)".format( self.get_ticker_presentation(), self._current_price, self._buy_price,
                  round(self._day_change, 1))
 
     def is_high_fall(self):
         if self._day_change <= -3.0:
             return True
         if self._day_change < 0:
-            hist = self._history
+            hist = self._info.history
             if hist is not None and hist["Size"] > 3:
                 fall_change = 0
                 fall_days = 1
                 for i in range(hist["Size"]):
-                    perc = round((self._bid - hist["Close"][-i-1]) * 100/self._bid,1 )
+                    perc = round((self._current_price - hist["Close"][-i-1]) * 100/self._current_price,1 )
                     if fall_change > perc:
                         fall_change = min([fall_change,perc])
                         fall_days = i + 1
@@ -318,47 +372,61 @@ class Stock:
         return False
 
     def get_fall_report(self):
-        hist = self._history
+        hist = self._info.history
         if hist is not None and hist["Size"] > 3:
             fall_change = 0
             fall_days = 1
             for i in range(hist["Size"]):
-                perc = round((self._bid - hist["Close"][-i-1]) * 100/self._bid,1 )
+                perc = round((self._current_price - hist["Close"][-i-1]) * 100/self._current_price,1 )
                 if fall_change > perc:
                     fall_change = min([fall_change,perc])
                     fall_days = i + 1
-            return u"\n{} {} {} ({}% today, {}% in {} days)".format( self.get_ticker_presentation(), self._bid, self._buy_price,
+            return u"\n{} {} {} ({}% today, {}% in {} days)".format( self.get_ticker_presentation(), self._current_price, self._buy_price,
                               round(self._day_change, 1), fall_change, fall_days)
-        return u"\n{} {} {} ({}% today)".format( self.get_ticker_presentation(), self._bid, self._buy_price, round(self._day_change, 1) )
+        return u"\n{} {} {} ({}% today)".format( self.get_ticker_presentation(), self._current_price, self._buy_price, round(self._day_change, 1) )
 
 
     def is_worth_buying(self):
-        return self._bid >= self._min_price and \
-            self._bid <= self._max_price and \
-            self._bid <= self._target * 0.98 and \
+        return self._current_price >= self._min_price and \
+            self._current_price <= self._max_price and \
+            self._current_price <= self._target * 0.98 and \
             datetime.now() - self._start_date < (self._target_date - self._start_date)/2
 
     def get_buying_report(self):
-        target_perc = round( (self._target - self._bid) / self._bid * 100, 1)
-        return ( target_perc,
-                 u"\n\U0001F4A1{} {} ({}%) in [{};{}] => {} (+{}%)".format( self._ticker, self._bid,
-                          self._day_change, self._min_price, self._max_price, self._target, target_perc) )
+        target_perc = round( (self._target - self._current_price) / self._current_price * 100, 1)
+        result = u"\n\U0001F4A1{} {} ({}%) in [{};{}] => {} (+{}%)".format( self._ticker, self._current_price,
+                   self._day_change, self._min_price, self._max_price, self._target, target_perc)
+        if self._info.target_mean_price > 0:
+            if self._info.target_mean_price < self._current_price:
+                result += " current price > target mean price {} [{} - {}]".format(
+                    self._info.target_mean_price, self._info.target_min_price, self._info.target_max_price )
+            elif self._info.target_min_price < self._current_price:
+                result += " current price > target MIN price {} [{} - {}]".format(
+                    self._info.target_min_price, self._info.target_min_price, self._info.target_max_price )
+        return ( target_perc, result )
 
     def is_almost_worth_buying(self):
-        return self._bid > self._max_price and \
-               self._bid <= self._target * 0.98 and \
-               self._bid <= self._max_price + ( self._target - self._max_price) * 0.1 and \
+        return self._current_price > self._max_price and \
+               self._current_price <= self._target * 0.98 and \
+               self._current_price <= self._max_price + ( self._target - self._max_price) * 0.1 and \
                datetime.now() - self._start_date < (self._target_date - self._start_date)/2
 
     def get_almost_buying_report(self):
-        target_perc = round( (self._target - self._bid) / self._bid * 100, 1)
-        return ( target_perc, u"\n\U00002754{} {} ({}%) > {} => {} (+{}%)".format(self._ticker, self._bid,
+        target_perc = round( (self._target - self._current_price) / self._current_price * 100, 1)
+        return ( target_perc, u"\n\U00002754{} {} ({}%) > {} => {} (+{}%)".format(self._ticker, self._current_price,
                  self._day_change, self._max_price, self._target, target_perc) )
 
 
 
-class Stocks:
-    def __init__(self):
+class Portfolio:
+    def __init__(self, exchange = None):
+        self._exchange = exchange
+        self._investments = 0
+        self._investments_rub = 0
+        self._investments_usd = 0
+        self._investments_eur = 0
+        self._usdrub = 0
+        self._eurrub = 0
         self._stocks = {}
         self._name = "<noname>"
         self._mode = "stock"
@@ -380,6 +448,9 @@ class Stocks:
     def load_from_ideas(self, sheet):
         self._stocks = {}
         self._name = sheet.title
+        self._investments_rub = 0
+        self._investments_usd = 0
+        self._investments_eur = 0
         armed = 0
         vals = sheet.get_all_values()
         if vals[4][0] != "Ticker":
@@ -394,7 +465,7 @@ class Stocks:
             ticker = vals[idx][0] # sheet.cell('A{}'.format(idx)).value
             if ticker != "" and ord(ticker[0]) in range(ord('A'),ord('Z')):
                 armed = 0
-                stock = Stock(ticker)
+                stock = Stock(ticker, exchange = self._exchange)
                 if stock.load_as_idea(vals[idx]):
                     self._stocks[ticker] = stock
             else:
@@ -407,10 +478,29 @@ class Stocks:
     def load_from_sheet(self, sheet):
         self._stocks = {}
         self._name = sheet.title
+        self._investments_rub = 0
+        self._investments_usd = 0
+        self._investments_eur = 0
+        self._deposit_rub = 0
+        self._deposit_usd = 0
+        self._deposit_eur = 0
         armed = 0
         vals = sheet.get_all_values()
-        if vals[10][0] != "Ticker":
+        if vals[10][0] != "Ticker" and vals[10][0] != "Stocks":
             return False
+        self._investments_rub = float(vals[5][11].replace(',','.'))
+        self._investments_usb = float(vals[6][11].replace(',','.'))
+        self._investments_eur = float(vals[7][11].replace(',','.'))
+        self._deposit_rub = float(vals[5][1].replace(',','.'))
+        self._deposit_usd = float(vals[6][1].replace(',','.'))
+        self._deposit_eur = float(vals[7][1].replace(',','.'))
+        self._usdrub = float(vals[2][3].replace(',','.'))
+        self._eurrub = float(vals[1][3].replace(',','.'))
+        if vals[10][0] == "Stocks":
+            self._deposit_rub += float(vals[10][3].replace(',','.'))
+            self._deposit_rub += float(vals[12][3].replace(',','.'))
+            return True
+
         idx = 12
         self._mode = "stock"
         tickers = []
@@ -420,7 +510,7 @@ class Stocks:
             ticker = vals[idx][0] # sheet.cell('A{}'.format(idx)).value
             if ticker != "" and ord(ticker[0]) in range(ord('A'),ord('Z')):
                 armed = 0
-                stock = Stock(ticker)
+                stock = Stock(ticker, exchange = self._exchange)
                 if stock.load_as_asset(vals[idx]):
                     self._stocks[ticker] = stock
             else:
@@ -429,6 +519,27 @@ class Stocks:
                     break
             idx = idx + 1
         return True if len(self._stocks)>0 else False
+
+    def get_investments_rub(self):
+        investments = 0
+        investments += self._investments_rub
+        investments += self._investments_usb * self._usdrub
+        investments += self._investments_eur * self._eurrub
+        return investments
+
+    def get_value_rub(self):
+        deposit = 0
+        deposit += self._deposit_rub
+        deposit += self._deposit_usd * self._usdrub
+        deposit += self._deposit_eur * self._eurrub
+        for r in self._stocks:
+            if self._stocks[r]._ticker.startswith("MCX:"):
+                deposit += self._stocks[r]._count * self._stocks[r]._current_price
+            elif self._stocks[r]._ticker.startswith("FRA:"):
+                deposit += self._stocks[r]._count * self._stocks[r]._current_price * self._eurrub
+            else:
+                deposit += self._stocks[r]._count * self._stocks[r]._current_price * self._usdrub
+        return deposit
 
     def to_string(self):
         return "{}".format(self._stocks)
@@ -510,6 +621,12 @@ class Stocks:
             if len(r) > 0:
                 result += u"\n\n\U0001F31F Maybe to buy:" + r
         elif self._mode == "stock":
+            dep = round(self.get_value_rub(),2)
+            inv = round(self.get_investments_rub(),2)
+            delta = round(dep - inv,2)
+            status = u"\n\U00002716 {} = {} {} {} ({}%)".format(
+                dep, inv, "\U00002796" if delta < 0 else u"\U00002795", abs(delta), round(delta / inv * 100,2))
+            result += status
             r = self.find_for_sell()
             if len(r) > 0:
                 result += u"\n\n\U0001F31F Target reached:" + r
@@ -535,6 +652,7 @@ def generate_info_message( ticker ):
 
 def generate_stats_message( doc_name ):
     result = ""
+    exchange = StockExchange()
     retries = 0
     while retries < 3:
         success = False
@@ -542,18 +660,26 @@ def generate_stats_message( doc_name ):
             gc = pygsheets.authorize()
             # You can open a spreadsheet by its title as it appears in Google Docs
             doc = gc.open( doc_name )
-            s = Stocks()
-            if s.load_from_summary( doc.worksheet('index', 0) ):
-                result += s.get_report() + "\n"
             stocks = []
+            investments = 0
+            deposit = 0
             for i in range(1, len(doc.worksheets())):
-                s = Stocks()
+                s = Portfolio(exchange = exchange)
                 if s.load_from_sheet( doc.worksheet('index', i)):
                     stocks.append( s )
+                    dep = s.get_value_rub()
+                    inv = s.get_investments_rub()
                     result += s.get_report() + "\n"
-                    # print(result)
+                    investments += inv
+                    deposit += dep
+            delta = round(deposit - investments,2)
+            status = u"\n\U00002716Portfolio: {} = {} {} {} ({}%)\n".format(
+                deposit, investments, "\U00002796" if delta < 0 else u"\U00002795", abs(delta),
+                round(abs(delta) / investments * 100,2))
+            result = status + result
+
             for i in range(1, len(doc.worksheets())):
-                s = Stocks()
+                s = Portfolio(exchange = exchange)
                 if s.load_from_ideas( doc.worksheet('index', i)):
                     result += s.get_report() + "\n"
             del gc
