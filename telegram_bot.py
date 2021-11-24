@@ -68,7 +68,15 @@ def process_text_message(token, msg, chat_id):
     if msg.upper() == "REPORT":
         msg = trade_bot.generate_stats_message( main_doc )
         if msg != "":
-            telegram_send( token, msg, chat_id )
+            part = 0
+            while len(msg) > 3800:
+                part += 1
+                telegram_send( token, u"PART {}\n".format(part) + msg[:3800], chat_id )
+                msg = msg[3800:]
+            if part == 0:
+                telegram_send( token, u"COMPLETE PART\n" + msg, chat_id )
+            else:
+                telegram_send( token, u"PART {}\n".format(part) + msg, chat_id )
     else:
         msg = trade_bot.generate_info_message( msg.upper() )
         if msg != "":
