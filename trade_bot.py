@@ -144,6 +144,14 @@ class TickerInfo:
         self._update()
         return self._recommendation_key
 
+    @property
+    def day_change(self):
+        self._update()
+        self._update_history()
+        if self._history is None or len(self._history) == 0:
+            return 0
+        return round((self._current_price - self._history["Close"][-1])/self._history["Close"][-1] * 100,1)
+
     def _request_data(self):
         host = "https://query2.finance.yahoo.com/"
         for retries in range(2):
@@ -251,7 +259,7 @@ class Stock:
                 try:
                     self._day_change = float(record[6].replace(',','.')[:-1])
                 except:
-                    self._day_change = 0 # TODO:
+                    self._day_change = self._info.day_change
             if record[13] == "#N/A":
                 self._target = 0
             else:
@@ -278,7 +286,7 @@ class Stock:
                 try:
                     self._day_change = float(record[3].replace(',','.')[:-1])
                 except:
-                    pass
+                    self._day_change = self._info.day_change
             if record[4] == "#N/A":
                 self._current_price = 0
             else:
