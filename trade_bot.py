@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+import google
 
 ### Generic Bid, Ask, PE, etc.
 ### https://query2.finance.yahoo.com/v11/finance/quoteSummary/SBER.ME?modules=summaryDetail
@@ -148,9 +149,9 @@ class TickerInfo:
     def day_change(self):
         self._update()
         self._update_history()
-        if self._history is None or len(self._history) == 0:
+        if self._history is None or len(self._history) == 0 or self._history["Size"] <= 1:
             return 0
-        return round((self._current_price - self._history["Close"][-1])/self._history["Close"][-1] * 100,1)
+        return round((self._current_price - self._history["Close"][-2])/self._history["Close"][-2] * 100,1)
 
     def _request_data(self):
         host = "https://query2.finance.yahoo.com/"
@@ -166,10 +167,16 @@ class TickerInfo:
             print("ERROR getting status for ", url)
         if result is not None and result["quoteSummary"]["result"] is not None:
             fd = result["quoteSummary"]["result"][0]["financialData"]
-            dks = result["quoteSummary"]["result"][0]["defaultKeyStatistics"]
+            if "defaultKeyStatistics" in result["quoteSummary"]["result"][0]:
+                dks = result["quoteSummary"]["result"][0]["defaultKeyStatistics"]
+            else:
+                dks = { "forwardPE": "", "pegRatio": "" }
             it = result["quoteSummary"]["result"][0]["indexTrend"]
             sd = result["quoteSummary"]["result"][0]["summaryDetail"] # beta, forwardPE, trailingPE, 
+            #if self._current_price == 0:
             self._current_price = float(fd["currentPrice"]["raw"])
+            if len(sd["bid"])>0 and self._current_price == 0:
+                self._current_price = float(sd["bid"]["raw"])
             if len(fd["targetLowPrice"])>0:
                 self._target_min_price = float(fd["targetLowPrice"]["raw"])
             if len(fd["targetHighPrice"])>0:
@@ -197,7 +204,7 @@ class TickerInfo:
         result = u"\n\U0001F4A1{}".format(self._ticker)
         if self._current_price > 0:
             result += "\n{} => [{},{}] Mean {} ({}%) ({}) ".format(self._current_price, self._target_min_price,  self._target_max_price,
-                self._target_mean_price, round((self._target_mean_price - self._current_price)/self._current_price*100,1), self._key )
+                self._target_mean_price, round((self._target_mean_price - self._current_price)/self._current_price*100,2), self._recommendation_key )
         return result
 
 class StockExchange:
@@ -237,15 +244,15 @@ class Stock:
         try:
             self._buy_price = float(record[1].replace(',','.'))
             self._count = int(record[2].replace(',','.'))
-            if record[7] == "#N/A":
-                self._current_price = 0
-            else:
-                try:
-                    self._current_price = float(record[7].replace(',','.'))
-                except:
-                    pass
+            self._current_price = self._info.current_price
             if self._current_price == 0:
-                self._current_price = self._info.current_price
+                if record[7] == "#N/A":
+                    self._current_price = 0
+                else:
+                    try:
+                        self._current_price = float(record[7].replace(',','.'))
+                    except:
+                        pass
             if record[4] == "#N/A":
                 self._change = 0
             else:
@@ -253,13 +260,15 @@ class Stock:
                     self._change = float(record[4].replace(',','.')[:-1])
                 except:
                     self._change = round((self._current_price - self._buy_price)/self._buy_price * 100, 1)
-            if record[6] == "#N/A":
-                self._day_change = 0
-            else:
-                try:
-                    self._day_change = float(record[6].replace(',','.')[:-1])
-                except:
-                    self._day_change = self._info.day_change
+            self._day_change = self._info.day_change
+            if self._day_change == 0:
+                if record[6] == "#N/A":
+                    self._day_change = 0
+                else:
+                    try:
+                        self._day_change = float(record[6].replace(',','.')[:-1])
+                    except:
+                        self._day_change = 0
             if record[13] == "#N/A":
                 self._target = 0
             else:
@@ -275,27 +284,31 @@ class Stock:
 
     def load_as_idea(self, record):
         try:
-            print(self._ticker)
+            # print(self._ticker)
             if record[2] =="":
                 self._start_date = datetime.now()
             else:
                 self._start_date = datetime.strptime( record[2], "%d.%m.%Y" )
-            if record[3] == "#N/A":
-                self._day_change = 0
-            else:
-                try:
-                    self._day_change = float(record[3].replace(',','.')[:-1])
-                except:
-                    self._day_change = self._info.day_change
-            if record[4] == "#N/A":
-                self._current_price = 0
-            else:
-                try:
-                    self._current_price = float(record[4].replace(',','.'))
-                except:
-                    pass
+            self._day_change = self._info.day_change
+            if self._day_change == 0:
+                if record[3] == "#N/A":
+                    self._day_change = 0
+                else:
+                    try:
+                        self._day_change = float(record[3].replace(',','.')[:-1])
+                    except:
+                        self._day_change = 0
+            self._current_price = 0
             if self._current_price == 0:
                 self._current_price = self._info.current_price
+            if self._current_price == 0:
+                if record[4] == "#N/A":
+                    self._current_price = 0
+                else:
+                    try:
+                        self._current_price = float(record[4].replace(',','.'))
+                    except:
+                        pass
             try: # TODO:
                 self._min_price = float(record[7].replace(',','.'))
             except:
@@ -408,7 +421,7 @@ class Stock:
                     min_days = i + 1
         return ((min_change, min_days),(max_change, max_days))
 
-    def get_report(self):
+    def get_report(self, sell_one = False, buy_one = False):
         result = ""
         result += u"\n{}".format(self.get_ticker_presentation())
         grow_report = ""
@@ -432,6 +445,10 @@ class Stock:
                                                    compare_price,
                                                    change_perc,
                                                    grow_report )
+            if sell_one and self._day_change > 0:
+                result += u" sell one?"
+            if buy_one and self._day_change < 0:
+                result += u" buy one?"
         target_perc = round( (self._target - self._current_price) / self._current_price * 100, 1)
         result += u" => {} ({}%) ".format( self._target, target_perc )
 
@@ -474,10 +491,15 @@ class Stock:
         return False
 
     def is_worth_buying(self):
-        return self._current_price >= self._min_price and \
-            self._current_price <= self._max_price and \
-            self._current_price <= self._target * 0.98 and \
-            datetime.now() - self._start_date < (self._target_date - self._start_date)/2
+        if datetime.now() - self._start_date > (self._target_date - self._start_date)/2:
+            return False
+        if self._current_price > self._target * 0.96:
+            return False
+        if self._current_price < self._min_price:
+            return False
+        if datetime.now() - self._start_date > timedelta(days=120):
+            return False
+        return True
 
     def get_buying_report(self):
         target_perc = round( (self._target - self._current_price) / self._current_price * 100, 1)
@@ -625,6 +647,17 @@ class Portfolio:
         deposit += self.get_open_value_rub()
         return deposit
 
+    def get_stock_price_in_rub(self, r):
+        s = 0;
+        if self._stocks[r]._ticker.startswith("MCX:"):
+            s = self._stocks[r]._current_price
+        elif self._stocks[r]._ticker.startswith("FRA:"):
+            s = self._stocks[r]._current_price * self._eurrub
+        else:
+            s = self._stocks[r]._current_price * self._usdrub
+        return s
+
+
     def get_open_value_rub(self):
         deposit = 0
         for r in self._stocks:
@@ -664,14 +697,28 @@ class Portfolio:
         result = ""
         for r in self._stocks:
             if self._stocks[r].is_high_grow():
-                result += self._stocks[r].get_report()
+                sell_one = False
+                threshold = 90000
+                price = self.get_stock_price_in_rub(r)
+                total = self._stocks[r]._count * price
+                if total > threshold + price and self._stocks[r]._current_price > self._stocks[r]._buy_price:
+                    sell_one = True
+                if total < threshold - price and self._stocks[r]._current_price < self._stocks[r]._buy_price:
+                    result += self._stocks[r].get_report(buy_one = True)
+                result += self._stocks[r].get_report(sell_one = sell_one)
         return result
 
     def find_high_fall(self):
         result = ""
         for r in self._stocks:
             if self._stocks[r].is_high_fall():
-                result += self._stocks[r].get_report()
+                buy_one = False
+                threshold = 90000
+                price = self.get_stock_price_in_rub(r)
+                total = self._stocks[r]._count * price
+                if total < threshold - price and self._stocks[r]._current_price < self._stocks[r]._buy_price:
+                    buy_one = True
+                result += self._stocks[r].get_report(buy_one)
         return result
 
     def find_to_buy(self):
@@ -785,9 +832,11 @@ def generate_stats_message( doc_name ):
                     result += s.get_report() + "\n"
             del gc
             success = True
-        except:
-            result = ""
-            raise
+        except google.auth.exceptions.RefreshError as e:
+            result = "Token error {}".format(e)
+            pass
+        except Exception as e:
+            result = "Unknown error {}".format(e)
             pass
         if success:
             break
@@ -803,5 +852,5 @@ if __name__=="__main__":
     if len( config.read( 'config.ini')) > 0:
         if config.has_option('main', 'sheets'):
             main_doc = config.get('main', 'sheets')
-    # print(generate_info_message("Visa"))
+    #print(generate_info_message("Vips"))
     print(generate_stats_message(main_doc))

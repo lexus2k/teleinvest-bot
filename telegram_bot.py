@@ -69,10 +69,10 @@ def process_text_message(token, msg, chat_id):
         msg = trade_bot.generate_stats_message( main_doc )
         if msg != "":
             part = 1
-            while len(msg) > 3800:
-                telegram_send( token, u"PART {}\n".format(part) + msg[:3800], chat_id )
+            while len(msg) > 3900:
+                telegram_send( token, u"PART {}\n".format(part) + msg[:3900], chat_id )
                 part += 1
-                msg = msg[3800:]
+                msg = msg[3900:]
             if part == 1:
                 telegram_send( token, u"COMPLETE PART\n" + msg, chat_id )
             else:
@@ -110,7 +110,9 @@ logger.info("Bot started")
 # Receive all unconfirmed messages
 update_id = 0
 report_sent = False
-report_time = ["5:30", "21:00", "10:00"]
+report_time = ["5:30", "10:00", "21:00"]
+cooldown = False
+time_index = 0
 
 while not exit_requested:
     result = telegram_update(telegram_bot_token, offset = update_id)
@@ -135,19 +137,20 @@ while not exit_requested:
                 sender = record[branch]['sender_chat']['id']
             process_text_message( telegram_bot_token, text, chat )
     now = datetime.datetime.now()
-    clear_report_flag = True
-    for t in report_time:
-        h = int(t.split(':')[0])
-        m = int(t.split(':')[1])
+    if len(report_time) >= 1:
+        h = int(report_time[time_index].split(':')[0])
+        m = int(report_time[time_index].split(':')[1])
         if now.hour == h and now.minute == m:
-            clear_report_flag = False
-            if not report_sent:
+            if not cooldown:
                 msg = trade_bot.generate_stats_message( main_doc )
                 if msg != "":
-                    report_sent = True
                     telegram_send( telegram_bot_token, msg)
-    if clear_report_flag:
-            report_sent = False
+                time_index += 1
+                if time_index >= len(report_time):
+                    time_index = 0
+                cooldown = True
+        else:
+            cooldown = False
 
 
 
